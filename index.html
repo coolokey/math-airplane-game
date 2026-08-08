@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>數學魔法使：正負數防禦戰</title>
+  
+  <!-- 引入 p5.js 與 MediaPipe -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <!-- 引入 Tailwind CSS 進行快速 UI 排版 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; background-color: #050510; touch-action: none; font-family: 'PingFang SC', 'Noto Sans TC', sans-serif; color: white;}
+    
+    /* 讓 Webcam 成為底層全螢幕背景，但將其透明度設為 0 以隱藏真實畫面 */
+    #videoContainer {
+      position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; overflow: hidden;
+      opacity: 0; /* 完全隱藏視訊畫面，只保留背後的數據偵測功能 */
+    }
+    #webcam {
+      width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); 
+    }
+
+    canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+    
+    #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+    
+    .glass-panel {
+      background: rgba(10, 15, 30, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(100, 150, 255, 0.4);
+      box-shadow: 0 4px 25px rgba(0, 200, 255, 0.3);
+    }
+
+    #loadingUI {
+      pointer-events: auto;
+      transition: opacity 0.5s;
+    }
+
+    .loader {
+      border: 4px solid rgba(0, 200, 255, 0.2);
+      border-top: 4px solid #00d2ff;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 15px auto;
+      box-shadow: 0 0 15px #00d2ff;
+    }
+
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    
+    .spell-active {
+      box-shadow: 0 0 15px currentColor;
+      transform: scale(1.05);
+      transition: all 0.2s;
+    }
+    
+    .heart {
+      color: #ff3366;
+      text-shadow: 0 0 10px #ff3366;
+    }
+
+    .text-glow {
+      text-shadow: 0 0 15px rgba(255, 255, 255, 0.8), 0 0 30px rgba(0, 200, 255, 0.6);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 底層攝影機背景 -->
+  <div id="videoContainer">
+    <video id="webcam" autoplay playsinline></video>
+  </div>
+
+  <!-- UI 疊加層 (相容筆電、手機、平板的多端響應式 RWD 佈局) -->
+  <div id="ui-layer" class="p-2 sm:p-4 md:p-6 flex flex-col justify-between pointer-events-none">
+    
+    <!-- 頂部資訊列 (RWD 自適應排版) -->
+    <div class="flex flex-wrap md:flex-nowrap justify-between items-center w-full gap-2 sm:gap-4">
+      
+      <!-- 遊戲狀態 (分數與血量) -->
+      <div class="glass-panel p-2.5 sm:p-4 rounded-xl sm:rounded-2xl flex flex-row md:flex-col justify-between items-center md:items-start min-w-[140px] sm:min-w-[180px] pointer-events-auto shadow-lg">
+        <h1 class="hidden md:block text-base sm:text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 tracking-wider mb-1">數理魔法使</h1>
+        <div class="flex items-center gap-2 md:w-full md:justify-between">
+          <span class="text-xs sm:text-sm text-blue-200">連續答對</span>
+          <span id="scoreDisplay" class="text-lg sm:text-2xl font-bold text-cyan-400 drop-shadow-[0_0_5px_rgba(0,255,255,0.8)]">0</span>
+        </div>
+        <div class="flex items-center gap-2 md:w-full md:justify-between ml-3 md:ml-0 md:mt-1">
+          <span class="text-xs sm:text-sm text-blue-200">生命值</span>
+          <span id="healthDisplay" class="text-base sm:text-xl tracking-widest heart">♥♥♥</span>
+        </div>
+      </div>
+
+      <!-- 中央題目區 (核心 RWD 彈性縮放) -->
+      <div class="glass-panel px-4 py-2 sm:px-8 sm:py-3 rounded-2xl sm:rounded-3xl text-center border-b-4 border-cyan-400 mx-auto max-w-[90vw] sm:max-w-md min-w-[240px] sm:min-w-[280px]">
+        <div class="text-[10px] sm:text-xs text-cyan-300 mb-0.5 sm:mb-1 font-bold tracking-widest uppercase">當前正負數試煉</div>
+        <div id="questionDisplay" class="text-2xl sm:text-4xl md:text-5xl font-black text-white text-glow tracking-wider font-mono">
+          載入中...
+        </div>
+      </div>
+
+      <!-- 法術指南 -->
+      <div class="glass-panel p-2.5 sm:p-4 rounded-xl sm:rounded-2xl hidden sm:block">
+        <h2 class="text-xs sm:text-sm font-bold text-blue-300 mb-1 border-b border-blue-500/30 pb-1">手勢詠唱</h2>
+        <ul class="text-[11px] sm:text-xs space-y-1 font-medium text-gray-300">
+          <li id="ui-shield" class="flex items-center px-2 py-1 rounded text-cyan-300 transition-all"><span class="text-sm sm:text-base mr-1.5">✊</span> 雙手握拳：能量護盾</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 遊戲結束畫面 (全螢幕模態框 RWD) -->
+    <div id="gameOverUI" class="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-md z-50 opacity-0 pointer-events-none transition-opacity duration-500 p-4">
+      <div class="text-center glass-panel p-6 sm:p-8 rounded-3xl border-red-500/50 pointer-events-auto max-w-sm sm:max-w-md w-full shadow-2xl">
+        <h2 class="text-2xl sm:text-4xl font-black text-red-500 drop-shadow-[0_0_15px_rgba(255,0,0,0.8)] mb-2">試煉失敗</h2>
+        <p class="text-xs sm:text-base text-blue-200 mb-4">算錯太多次或漏掉了正確答案...</p>
+        <p class="text-sm sm:text-lg mb-6">最終連續答對數：<span id="finalScore" class="text-3xl sm:text-4xl font-bold text-cyan-400">0</span></p>
+        <button onclick="restartGame()" class="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 rounded-full font-bold text-sm sm:text-lg shadow-[0_0_15px_rgba(0,200,255,0.5)] transition-all transform hover:scale-105 active:scale-95 w-full sm:w-auto">
+          重新挑戰 (Restart)
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 載入畫面 -->
+  <div id="loadingUI" class="absolute inset-0 bg-[#050510] flex items-center justify-center z-50 p-4">
+    <div class="text-center glass-panel p-6 sm:p-8 rounded-3xl w-full max-w-sm">
+      <div class="loader"></div>
+      <h2 class="text-lg sm:text-xl font-bold text-cyan-400 drop-shadow-[0_0_10px_rgba(0,255,255,0.5)]">正在連結法力迴路...</h2>
+      <p class="text-blue-300/70 mt-2 text-xs sm:text-sm">請允許相機權限以啟動手勢辨識</p>
+    </div>
+  </div>
+
+  <script>
+    // --- 音效系統 (Web Audio API 虛擬合成器) ---
+    let audioCtx = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playSound(type) {
+      try {
+        initAudio();
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+
+        if (type === 'correct') {
+          // 答對音效：科技感雙斜音水晶琶音 (C5 -> E5 -> G5 -> C6)
+          const freqs = [523.25, 659.25, 783.99, 1046.50];
+          freqs.forEach((f, idx) => {
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(f, now + idx * 0.05);
+            gain.gain.setValueAtTime(0.2, now + idx * 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.05 + 0.22);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now + idx * 0.05);
+            osc.stop(now + idx * 0.05 + 0.24);
+          });
+        } else if (type === 'wrong') {
+          // 答錯音效：科幻警告巨響 (鋸齒波快速下潛)
+          let osc = audioCtx.createOscillator();
+          let gain = audioCtx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(55, now + 0.3);
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.32);
+        }
+      } catch (e) {
+        console.error("Audio error:", e);
+      }
+    }
+
+    // --- 遊戲狀態與實體 ---
+    let gameState = "PLAYING"; // "PLAYING", "GAMEOVER"
+    let score = 0;
+    let health = 3;
+    let enemies = [];
+    let particles = [];
+    let bgStars = [];
+    
+    // 數學題目相關
+    let currentQuestionStr = "";
+    let correctAnswer = 0;
+
+    // 支援多手的狀態管理
+    let activeHands = []; // 儲存所有偵測到的手部資料
+
+    // --- p5.js 初始化 ---
+    function setup() {
+      let canvas = createCanvas(windowWidth, windowHeight);
+      canvas.style('display', 'block');
+      textFont('monospace'); // 為數字設定等寬字體
+      initSciFiBg();
+      initMediaPipe();
+      generateQuestion(); // 產生第一題
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      initSciFiBg();
+    }
+
+    // --- 科幻背景系統 ---
+    function initSciFiBg() {
+      bgStars = [];
+      for (let i = 0; i < 70; i++) {
+        bgStars.push({
+          x: random(width),
+          y: random(height),
+          size: random(1, 3.5),
+          speed: random(0.3, 1.5),
+          alpha: random(100, 255)
+        });
+      }
+    }
+
+    function drawSciFiBg() {
+      // 1. 深藍紫夜空與殘影
+      background(6, 10, 26, 210);
+
+      // 2. 動態微粒星陣
+      noStroke();
+      for (let s of bgStars) {
+        s.y += s.speed;
+        if (s.y > height) {
+          s.y = 0;
+          s.x = random(width);
+        }
+        fill(0, 220, 255, s.alpha * (0.5 + 0.5 * sin(frameCount * 0.05 + s.x)));
+        circle(s.x, s.y, s.size);
+      }
+
+      // 3. 底部賽博朋克透視網格 (Perspective Grid)
+      push();
+      let horizonY = height * 0.65;
+      
+      // 地平線發光條
+      drawingContext.shadowBlur = 15;
+      drawingContext.shadowColor = 'rgba(0, 200, 255, 0.8)';
+      stroke(0, 220, 255, 120);
+      strokeWeight(2);
+      line(0, horizonY, width, horizonY);
+      drawingContext.shadowBlur = 0;
+
+      // 縱向放射線
+      stroke(0, 180, 255, 40);
+      strokeWeight(1);
+      let cx = width / 2;
+      let lineCount = 18;
+      for (let i = -lineCount; i <= lineCount; i++) {
+        let bottomX = cx + i * (width / 8);
+        line(cx, horizonY, bottomX, height);
+      }
+
+      // 橫向動態推進線
+      let gridOffset = (frameCount * 1.5) % 32;
+      for (let y = horizonY; y < height; y += 32) {
+        let lineY = y + gridOffset;
+        if (lineY <= height) {
+          let alphaProgress = (lineY - horizonY) / (height - horizonY);
+          stroke(0, 200, 255, alphaProgress * 80);
+          line(0, lineY, width, lineY);
+        }
+      }
+      pop();
+    }
+
+    // --- MediaPipe 初始化與處理 ---
+    function initMediaPipe() {
+      const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+      hands.setOptions({
+        maxNumHands: 2, // 支援雙手
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+      });
+      hands.onResults(onResults);
+      
+      const videoElement = document.getElementById('webcam');
+      const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 640, height: 480
+      });
+      camera.start();
+    }
+
+    function getScreenCoords(mx, my) {
+      let videoElement = document.getElementById('webcam');
+      if (!videoElement || videoElement.videoWidth === 0) return { x: (1 - mx) * width, y: my * height };
+      let vw = videoElement.videoWidth, vh = videoElement.videoHeight;
+      let videoAspect = vw / vh, screenAspect = width / height;
+      let renderWidth, renderHeight, offsetX, offsetY;
+      
+      if (screenAspect > videoAspect) {
+        renderWidth = width; renderHeight = width / videoAspect;
+        offsetX = 0; offsetY = (height - renderHeight) / 2;
+      } else {
+        renderHeight = height; renderWidth = height * videoAspect;
+        offsetX = (width - renderWidth) / 2; offsetY = 0;
+      }
+      return { x: offsetX + (1 - mx) * renderWidth, y: offsetY + my * renderHeight };
+    }
+
+    function onResults(results) {
+      const loadingUI = document.getElementById('loadingUI');
+      if (loadingUI && loadingUI.style.opacity !== '0') {
+        loadingUI.style.opacity = '0';
+        setTimeout(() => loadingUI.style.display = 'none', 500);
+      }
+
+      if (gameState === "GAMEOVER") return;
+
+      let newActiveHands = [];
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          let lm = results.multiHandLandmarks[i];
+          
+          let indexTipPos = getScreenCoords(lm[8].x, lm[8].y);
+          let palmPos = getScreenCoords(lm[9].x, lm[9].y); 
+          
+          // 判斷手指是否伸直 (指尖 Y 小於第二關節 Y)
+          let indexUp = lm[8].y < lm[6].y;
+          let middleUp = lm[12].y < lm[10].y;
+          let ringUp = lm[16].y < lm[14].y;
+          let pinkyUp = lm[20].y < lm[18].y;
+          
+          let handState = "NONE";
+          // 判斷是否為握拳 (四指皆彎曲)
+          if (!indexUp && !middleUp && !ringUp && !pinkyUp) {
+            handState = "FIST";
+          }
+
+          newActiveHands.push({
+            landmarks: lm,
+            handState: handState,
+            palmPos: palmPos,
+            indexTipPos: indexTipPos
+          });
+        }
+      } 
+      
+      activeHands = newActiveHands;
+      updateUIHighlight();
+    }
+
+    function updateUIHighlight() {
+      // 判斷是否雙手握拳
+      let shieldActive = activeHands.length >= 2 && activeHands.filter(h => h.handState === 'FIST').length >= 2;
+
+      let uiShield = document.getElementById('ui-shield');
+      if(uiShield) {
+        uiShield.classList.toggle('spell-active', shieldActive);
+        uiShield.classList.toggle('bg-cyan-900/50', shieldActive);
+      }
+    }
+
+    // --- 數學邏輯 ---
+    function generateQuestion() {
+      // 產生 -10 到 10 之間的隨機數
+      let num1 = Math.floor(Math.random() * 21) - 10; 
+      let num2 = Math.floor(Math.random() * 21) - 10;
+      let isAdd = Math.random() > 0.5;
+
+      correctAnswer = isAdd ? (num1 + num2) : (num1 - num2);
+
+      // 格式化顯示字串 (負數加上括號)
+      let str1 = num1 < 0 ? `(${num1})` : `${num1}`;
+      let str2 = num2 < 0 ? `(${num2})` : `${num2}`;
+      let op = isAdd ? '+' : '-';
+      currentQuestionStr = `${str1} ${op} ${str2} = ?`;
+
+      // 更新 UI
+      document.getElementById('questionDisplay').innerText = currentQuestionStr;
+      document.getElementById('questionDisplay').classList.add('scale-110', 'text-green-300');
+      setTimeout(() => {
+        document.getElementById('questionDisplay').classList.remove('scale-110', 'text-green-300');
+      }, 300);
+
+      // 生成三個掉落物 (1個正確，2個錯誤)
+      spawnWave();
+    }
+
+    function spawnWave() {
+      enemies = [];
+      let answers = [correctAnswer];
+      
+      // 產生兩個不重複且不等於正確答案的干擾數
+      while(answers.length < 3) {
+        let offset = Math.floor(Math.random() * 11) - 5; 
+        if (offset === 0) offset = 2; // 避免為0
+        let wrong = correctAnswer + offset;
+        
+        if (Math.random() > 0.7) {
+            wrong = -correctAnswer; 
+        }
+
+        if (!answers.includes(wrong) && wrong !== correctAnswer) {
+          answers.push(wrong);
+        }
+      }
+      
+      // 打亂陣列順序
+      answers.sort(() => Math.random() - 0.5);
+
+      // 根據畫面寬度平均分配位置
+      let spacing = width / 4;
+      for(let i=0; i<3; i++) {
+        enemies.push(new MathOrb(spacing * (i+1), answers[i]));
+      }
+    }
+
+    function checkAnswer(hitValue, orbX, orbY) {
+      if (hitValue === correctAnswer) {
+        // 答對了！播放答對音效與綠色粒子
+        playSound('correct');
+        createExplosion(orbX, orbY, [0, 255, 100]); 
+        addScore(1);
+        generateQuestion(); // 產生新題目
+        return true; 
+      } else {
+        // 答錯了！播放答錯音效與紅色粒子
+        playSound('wrong');
+        createExplosion(orbX, orbY, [255, 50, 50]); 
+        loseHealth("答錯了！");
+        return false;
+      }
+    }
+
+    // --- 數學幾何輔助函數 (用於護盾碰撞) ---
+    function distSq(x1, y1, x2, y2) {
+      return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
+    }
+
+    function distToSegment(px, py, x1, y1, x2, y2) {
+      let l2 = distSq(x1, y1, x2, y2);
+      if (l2 === 0) return dist(px, py, x1, y1);
+      let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return dist(px, py, x1 + t * (x2 - x1), y1 + t * (y2 - y1));
+    }
+
+    // --- 主遊戲迴圈 ---
+    function draw() {
+      // 繪製科幻深空與透視網格背景
+      drawSciFiBg();
+      
+      if (gameState === "PLAYING") {
+        updateGameLogic();
+      }
+
+      drawGameEntities();
+      
+      if (activeHands.length > 0 && gameState === "PLAYING") {
+        for (let hand of activeHands) {
+          drawHandMagic(hand);
+        }
+        
+        // 繪製雙手能量護盾
+        let fistHands = activeHands.filter(h => h.handState === "FIST");
+        if (fistHands.length >= 2) {
+          drawEnergyShield(fistHands[0], fistHands[1]);
+        }
+      }
+    }
+
+    function updateGameLogic() {
+      let waveReset = false;
+
+      let fistHands = activeHands.filter(h => h.handState === "FIST");
+      let shieldActive = fistHands.length >= 2;
+      let shieldThickness = 30;
+
+      // 1. 更新敵球
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        let e = enemies[i];
+        e.update();
+        
+        // 檢查是否掉到底部
+        if (e.y > height + e.r) {
+          if (e.value === correctAnswer) {
+            // 放跑了正確答案！扣血
+            loseHealth("錯失正確答案！");
+            waveReset = true;
+          }
+          enemies.splice(i, 1);
+          continue;
+        }
+
+        // 檢查護盾碰撞
+        if (shieldActive && !waveReset) {
+          let h1 = fistHands[0];
+          let h2 = fistHands[1];
+          let d = distToSegment(e.x, e.y, h1.palmPos.x, h1.palmPos.y, h2.palmPos.x, h2.palmPos.y);
+          
+          if (d < e.r + shieldThickness) {
+            if (checkAnswer(e.value, e.x, e.y)) {
+               waveReset = true;
+            } else {
+               enemies.splice(i, 1);
+            }
+            continue; 
+          }
+        }
+      }
+
+      if (waveReset) {
+        if(gameState === "PLAYING") generateQuestion();
+        return; 
+      }
+
+      // 2. 更新粒子
+      for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update();
+        if (particles[i].alpha <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function drawGameEntities() {
+      for (let e of enemies) e.display();
+      for (let p of particles) p.display();
+    }
+
+    // --- 玩家法術特效繪製 ---
+    function drawHandMagic(hand) {
+      push();
+      drawMagicSkeleton(hand.landmarks);
+
+      if (hand.handState === "FIST") {
+         drawingContext.shadowBlur = 30;
+         drawingContext.shadowColor = 'rgba(0, 255, 255, 0.8)';
+         fill(0, 150, 255, 150);
+         noStroke();
+         circle(hand.palmPos.x, hand.palmPos.y, 60);
+         
+         stroke(0, 255, 255, 200);
+         strokeWeight(4);
+         noFill();
+         let pulse = sin(frameCount * 0.3) * 5;
+         circle(hand.palmPos.x, hand.palmPos.y, 70 + pulse);
+      }
+
+      pop();
+    }
+
+    function drawEnergyShield(h1, h2) {
+      let x1 = h1.palmPos.x, y1 = h1.palmPos.y;
+      let x2 = h2.palmPos.x, y2 = h2.palmPos.y;
+      
+      let d = dist(x1, y1, x2, y2);
+      if (d < 15) return;
+
+      let numLinks = Math.max(3, floor(d / 35));
+      let linkLen = d / numLinks;
+      let angle = atan2(y2 - y1, x2 - x1);
+      
+      push();
+      translate(x1, y1);
+      rotate(angle);
+
+      let flicker = random(0.7, 1.0);
+      drawingContext.shadowBlur = 25 * flicker;
+      drawingContext.shadowColor = 'rgba(100, 220, 255, 0.9)';
+
+      for (let i = 0; i < numLinks; i++) {
+        let cx = i * linkLen + linkLen / 2;
+        push();
+        translate(cx, 0);
+
+        let shake = random(-3, 3);
+        translate(0, shake);
+
+        if (i % 2 === 0) {
+          noFill();
+          strokeWeight(4);
+          stroke(180, 240, 255, 240 * flicker);
+          ellipse(0, 0, linkLen * 0.95, 16);
+          strokeWeight(2);
+          stroke(255, 255, 255, 255);
+          ellipse(0, 0, linkLen * 0.8, 10);
+        } else {
+          noFill();
+          strokeWeight(6);
+          stroke(150, 220, 255, 255 * flicker);
+          ellipse(0, 0, linkLen * 0.6, 6);
+          strokeWeight(2.5);
+          stroke(255, 255, 255, 255);
+          line(-linkLen * 0.2, 0, linkLen * 0.2, 0);
+        }
+        pop();
+      }
+
+      stroke(200, 255, 255, 180 * flicker);
+      strokeWeight(2);
+      noFill();
+      beginShape();
+      for (let i = 0; i <= numLinks; i++) {
+        let lx = i * linkLen;
+        let ly = random(-18, 18);
+        vertex(lx, ly);
+      }
+      endShape();
+      
+      pop();
+    }
+
+    function drawMagicSkeleton(landmarks) {
+      if (!landmarks) return;
+      drawingContext.shadowBlur = 10;
+      drawingContext.shadowColor = 'rgba(100, 200, 255, 0.5)';
+      
+      const connections = [
+        [0,1], [1,2], [2,3], [3,4], [0,5], [5,6], [6,7], [7,8], 
+        [5,9], [9,10], [10,11], [11,12], [9,13], [13,14], [14,15], [15,16], 
+        [13,17], [17,18], [18,19], [19,20], [0,17]
+      ];
+
+      stroke(100, 200, 255, 80); 
+      strokeWeight(2);
+      for (let [i, j] of connections) {
+        let p1 = getScreenCoords(landmarks[i].x, landmarks[i].y);
+        let p2 = getScreenCoords(landmarks[j].x, landmarks[j].y);
+        line(p1.x, p1.y, p2.x, p2.y);
+      }
+
+      fill(200, 255, 255, 150);
+      noStroke();
+      for (let i = 0; i < landmarks.length; i++) {
+        let p = getScreenCoords(landmarks[i].x, landmarks[i].y);
+        circle(p.x, p.y, i===8||i===9 ? 8 : 4);
+      }
+      drawingContext.shadowBlur = 0; 
+    }
+
+    // --- 遊戲類別定義 ---
+
+    class MathOrb {
+      constructor(x, value) {
+        this.r = Math.min(width * 0.08, 40); 
+        this.x = x;
+        this.y = -this.r;
+        this.value = value;
+        this.speed = 1.5 + (score * 0.1); 
+        if (this.speed > 5) this.speed = 5; 
+        this.wobbleOffset = random(TWO_PI);
+
+        this.shapeType = floor(random(3));
+
+        let colorThemes = [
+          {glow: 'rgba(255, 100, 150, 0.8)', core: [120, 20, 60], stroke: [255, 120, 160]},
+          {glow: 'rgba(100, 255, 150, 0.8)', core: [20, 120, 60], stroke: [120, 255, 160]},
+          {glow: 'rgba(150, 100, 255, 0.8)', core: [70, 30, 130], stroke: [180, 120, 255]},
+          {glow: 'rgba(255, 200, 50, 0.8)',  core: [130, 100, 20], stroke: [255, 220, 100]}
+        ];
+        this.theme = colorThemes[floor(random(colorThemes.length))];
+      }
+      update() {
+        this.y += this.speed;
+        this.x += sin(frameCount * 0.03 + this.wobbleOffset) * 1.5; 
+      }
+      display() {
+        push();
+        translate(this.x, this.y);
+        
+        drawingContext.shadowBlur = 25;
+        drawingContext.shadowColor = this.theme.glow;
+        
+        noStroke();
+        fill(this.theme.core[0], this.theme.core[1], this.theme.core[2], 220);
+        
+        strokeWeight(3);
+        stroke(this.theme.stroke[0], this.theme.stroke[1], this.theme.stroke[2], 150 + sin(frameCount*0.1)*50);
+        
+        if (this.shapeType === 0) {
+          circle(0, 0, this.r * 2);
+          noFill();
+          circle(0, 0, this.r * 2.3);
+        } 
+        else if (this.shapeType === 1) {
+          beginShape();
+          for(let i = 0; i < 6; i++) {
+            let angle = TWO_PI / 6 * i;
+            vertex(cos(angle) * this.r * 1.1, sin(angle) * this.r * 1.1);
+          }
+          endShape(CLOSE);
+          noFill();
+          beginShape();
+          for(let i = 0; i < 6; i++) {
+            let angle = TWO_PI / 6 * i;
+            vertex(cos(angle) * this.r * 1.35, sin(angle) * this.r * 1.35);
+          }
+          endShape(CLOSE);
+        } 
+        else {
+          quad(0, -this.r * 1.25, this.r * 1.1, 0, 0, this.r * 1.25, -this.r * 1.1, 0);
+          noFill();
+          quad(0, -this.r * 1.5, this.r * 1.3, 0, 0, this.r * 1.5, -this.r * 1.3, 0);
+        }
+
+        drawingContext.shadowBlur = 10;
+        drawingContext.shadowColor = 'rgba(255, 255, 255, 1)';
+        fill(255);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(Math.max(16, this.r * 0.8)); 
+        textStyle(BOLD);
+        text(this.value, 0, 2); 
+        pop();
+      }
+    }
+
+    class Particle {
+      constructor(x, y, colorArr) {
+        this.x = x;
+        this.y = y;
+        this.vx = random(-5, 5);
+        this.vy = random(-5, 5);
+        this.alpha = 255;
+        this.color = colorArr; 
+        this.size = random(4, 12);
+        this.decay = random(8, 15);
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= this.decay;
+        this.size *= 0.92;
+      }
+      display() {
+        push();
+        noStroke();
+        fill(this.color[0], this.color[1], this.color[2], this.alpha);
+        drawingContext.shadowBlur = 10;
+        drawingContext.shadowColor = `rgba(${this.color[0]}, ${this.color[1]}, ${this.color[2]}, ${this.alpha/255})`;
+        circle(this.x, this.y, this.size);
+        pop();
+      }
+    }
+
+    function createExplosion(x, y, colorArr) {
+      for (let i = 0; i < 30; i++) {
+        particles.push(new Particle(x, y, colorArr));
+      }
+    }
+
+    // --- UI 與遊戲流程控制 ---
+    function addScore(points) {
+      score += points;
+      let sd = document.getElementById('scoreDisplay');
+      sd.innerText = score;
+      sd.classList.add('scale-150', 'text-green-400');
+      setTimeout(() => sd.classList.remove('scale-150', 'text-green-400'), 200);
+    }
+
+    function loseHealth(reason) {
+      playSound('wrong');
+      health--;
+      let hd = document.getElementById('healthDisplay');
+      let hearts = "";
+      for(let i=0; i<health; i++) hearts += "♥";
+      for(let i=health; i<3; i++) hearts += "♡"; 
+      hd.innerText = hearts;
+      
+      let tip = document.createElement('div');
+      tip.innerText = reason;
+      tip.className = "absolute top-1/3 left-1/2 transform -translate-x-1/2 w-full text-center text-2xl sm:text-3xl font-bold text-red-500 drop-shadow-[0_0_10px_rgba(255,0,0,0.8)] z-50 pointer-events-none transition-all duration-1000";
+      document.body.appendChild(tip);
+      
+      setTimeout(() => { tip.style.opacity = '0'; tip.style.transform = "translate(-50%, -50px)"; }, 100);
+      setTimeout(() => tip.remove(), 1000);
+
+      document.body.style.transform = "translate(10px, 10px)";
+      setTimeout(() => document.body.style.transform = "translate(-10px, -10px)", 50);
+      setTimeout(() => document.body.style.transform = "translate(0, 0)", 100);
+
+      if (health <= 0) {
+        gameOver();
+      }
+    }
+
+    function gameOver() {
+      gameState = "GAMEOVER";
+      document.getElementById('finalScore').innerText = score;
+      let goUI = document.getElementById('gameOverUI');
+      goUI.classList.remove('opacity-0', 'pointer-events-none');
+      goUI.classList.add('opacity-100', 'pointer-events-auto');
+    }
+
+    function restartGame() {
+      score = 0;
+      health = 3;
+      particles = [];
+      document.getElementById('scoreDisplay').innerText = score;
+      document.getElementById('healthDisplay').innerText = "♥♥♥";
+      
+      let goUI = document.getElementById('gameOverUI');
+      goUI.classList.remove('opacity-100', 'pointer-events-auto');
+      goUI.classList.add('opacity-0', 'pointer-events-none');
+      
+      gameState = "PLAYING";
+      generateQuestion(); 
+    }
+
+  </script>
+</body>
+</html>

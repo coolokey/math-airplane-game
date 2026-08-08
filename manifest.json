@@ -1,0 +1,24 @@
+{
+  "name": "魔法學徒：元素防禦戰",
+  "short_name": "元素防禦戰",
+  "description": "七年級數學：正負數加減綜合挑戰遊戲",
+  "start_url": "./math-airplane-game.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050510",
+  "theme_color": "#050510",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
